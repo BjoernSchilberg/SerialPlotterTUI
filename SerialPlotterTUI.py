@@ -397,19 +397,19 @@ class SerialPlotterTUI(App):
                 timeout=0.1
             )
             if not silent:
-                log = self.query_one("#serial-log", RichLog)
-                log.write(f"[green]✓ Verbunden mit {self.port} @ {self.baudrate} baud[/green]")
-                log.write("")
+                self.notify(
+                    f"{self.port} @ {self.baudrate} baud",
+                    title="✓ Verbunden",
+                    severity="information"
+                )
             return True
         except serial.SerialException as e:
             if not silent:
-                log = self.query_one("#serial-log", RichLog)
-                log.write(f"[red]✗ Fehler: {e}[/red]")
+                self.notify(f"Fehler: {e}", title="✗ Verbindung fehlgeschlagen", severity="error")
             return False
         except Exception as e:
             if not silent:
-                log = self.query_one("#serial-log", RichLog)
-                log.write(f"[red]✗ Unerwarteter Fehler: {e}[/red]")
+                self.notify(f"Unerwarteter Fehler: {e}", title="✗ Verbindung fehlgeschlagen", severity="error")
             return False
     
     def parse_line(self, line: str) -> dict[str, float]:
@@ -523,14 +523,20 @@ class SerialPlotterTUI(App):
             return False
     
     def _show_disconnected(self) -> None:
-        """Zeigt Disconnect-Meldung im Log"""
-        log = self.query_one("#serial-log", RichLog)
-        log.write(f"[yellow]⚠ Gerät {self.port} getrennt - warte auf Wiederverbindung...[/yellow]")
+        """Zeigt Disconnect-Meldung als Notification"""
+        self.notify(
+            f"Gerät {self.port} getrennt - warte auf Wiederverbindung...",
+            title="⚠ Verbindung getrennt",
+            severity="warning"
+        )
     
     def _show_reconnected(self) -> None:
-        """Zeigt Reconnect-Meldung im Log"""
-        log = self.query_one("#serial-log", RichLog)
-        log.write(f"[green]✓ Wiederverbunden mit {self.port}[/green]")
+        """Zeigt Reconnect-Meldung als Notification"""
+        self.notify(
+            f"Wiederverbunden mit {self.port}",
+            title="✓ Verbindung wiederhergestellt",
+            severity="information"
+        )
     
     def process_line(self, line: str) -> None:
         """Verarbeitet eine empfangene Zeile"""
