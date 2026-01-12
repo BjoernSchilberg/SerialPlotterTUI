@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Echtzeit Serial Plotter TUI - Terminal User Interface Version
-Verwendet Textual für eine moderne Terminal-Oberfläche mit ASCII-Graph.
+Verwendet Textual für eine moderne Terminal-Oberfläche mit plotext-Graphen.
 
 Unterstützte Formate:
 - Einzelwert pro Zeile: "123.45"
@@ -18,6 +18,7 @@ from datetime import datetime
 
 import serial
 import serial.tools.list_ports
+import plotext as plt
 
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical
@@ -29,22 +30,123 @@ from rich.panel import Panel
 from rich.table import Table
 
 
-# ASCII-Zeichen für den Graphen
-GRAPH_CHARS = " ▁▂▃▄▅▆▇█"
+# Graph-Modi
+GRAPH_MODE_LINE = "line"
+GRAPH_MODE_BAR = "bar"
+GRAPH_MODE_SCATTER = "scatter"
+
+# Standard-Farben für plotext (RGB-Tuples) - werden vom Theme überschrieben
+PLOTEXT_COLORS_DARK = [
+    (84, 239, 174),   # grün
+    (68, 180, 255),   # cyan/blau
+    (252, 213, 121),  # gelb
+    (191, 121, 252),  # magenta
+    (255, 73, 112),   # rot
+    (172, 207, 231),  # hellblau
+]
+
+PLOTEXT_COLORS_LIGHT = [
+    (0, 150, 80),     # dunkelgrün
+    (0, 100, 200),    # dunkelblau
+    (180, 140, 0),    # dunkelgelb/orange
+    (130, 50, 180),   # dunkelmagenta
+    (200, 30, 60),    # dunkelrot
+    (50, 100, 150),   # dunkelblaugrau
+]
 
 
-class AsciiGraph(Static):
-    """Widget für ASCII-basierte Graphen-Darstellung"""
+def hex_to_rgb(hex_color: str) -> tuple:
+    """Konvertiert Hex-Farbe (#RRGGBB) zu RGB-Tuple"""
+    if not hex_color or hex_color == "None":
+        return None
+    hex_color = hex_color.lstrip('#')
+    if len(hex_color) == 6:
+        return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+    return None
+
+
+class PlotextGraph(Static):
+    """Widget für plotext-basierte Graphen-Darstellung (wie Dolphie)"""
     
-    def __init__(self, max_points: int = 100, height: int = 15, **kwargs):
+    graph_mode = reactive(GRAPH_MODE_LINE)
+    
+    def __init__(self, max_points: int = 100, **kwargs):
         super().__init__(**kwargs)
         self.max_points = max_points
-        self.graph_height = height
         self.data_series: dict[str, deque] = {}
-        self.color_list = ["green", "cyan", "yellow", "magenta", "red", "blue"]
+        self.timestamps: deque = deque(maxlen=max_points)
+        self.sample_count = 0
+    
+    def _get_theme_colors(self) -> dict:
+        """Holt die Farben aus dem aktuellen Textual-Theme"""
+        try:
+            theme = self.app.current_theme
+            if theme:
+                is_dark = theme.dark
+                
+                # Hintergrund aus Theme holen
+                bg_color = theme.background
+                if bg_color:
+                    bg_rgb = hex_to_rgb(str(bg_color))
+                else:
+                    bg_rgb = (10, 14, 27) if is_dark else (250, 250, 250)
+                
+                # Surface-Farbe für Achsen
+                surface_color = theme.surface
+                if surface_color:
+                    surface_rgb = hex_to_rgb(str(surface_color))
+                else:
+                    surface_rgb = bg_rgb
+                
+                # Vordergrundfarbe für Ticks/Beschriftung
+                fg_color = theme.foreground
+                if fg_color:
+                    fg_rgb = hex_to_rgb(str(fg_color))
+                else:
+                    fg_rgb = (200, 200, 200) if is_dark else (50, 50, 50)
+                
+                # Theme-Farben für die Linien (primary, secondary, success, warning, error, accent)
+                plot_colors = []
+                for color_attr in ['success', 'primary', 'warning', 'accent', 'error', 'secondary']:
+                    color = getattr(theme, color_attr, None)
+                    if color:
+                        rgb = hex_to_rgb(str(color))
+                        if rgb:
+                            plot_colors.append(rgb)
+                
+                if not plot_colors:
+                    plot_colors = PLOTEXT_COLORS_DARK if is_dark else PLOTEXT_COLORS_LIGHT
+                
+                # Rich-Farben für den Text
+                rich_colors = ["green", "cyan", "yellow", "magenta", "red", "blue"] if is_dark else \
+                              ["dark_green", "blue", "dark_orange", "dark_magenta", "dark_red", "dark_cyan"]
+                
+                return {
+                    "is_dark": is_dark,
+                    "canvas_color": bg_rgb or ((10, 14, 27) if is_dark else (250, 250, 250)),
+                    "axes_color": surface_rgb or bg_rgb or ((10, 14, 27) if is_dark else (250, 250, 250)),
+                    "ticks_color": fg_rgb or ((200, 200, 200) if is_dark else (50, 50, 50)),
+                    "plot_colors": plot_colors,
+                    "rich_colors": rich_colors,
+                }
+        except Exception:
+            pass
+        
+        # Fallback
+        return {
+            "is_dark": True,
+            "canvas_color": (10, 14, 27),
+            "axes_color": (10, 14, 27),
+            "ticks_color": (133, 159, 213),
+            "plot_colors": PLOTEXT_COLORS_DARK,
+            "rich_colors": ["green", "cyan", "yellow", "magenta", "red", "blue"],
+        }
     
     def add_values(self, values: dict[str, float]) -> None:
         """Fügt neue Werte hinzu"""
+        self.sample_count += 1
+        self.timestamps.append(self.sample_count)
+        
         for label, value in values.items():
             if label not in self.data_series:
                 self.data_series[label] = deque(maxlen=self.max_points)
@@ -57,109 +159,98 @@ class AsciiGraph(Static):
         
         self.refresh()
     
-    def render_graph(self) -> Text:
-        """Rendert den ASCII-Graphen"""
-        if not self.data_series:
-            return Text("Warte auf Daten...", style="dim")
-        
-        # Breite des Graphen (Terminal-Breite minus Rand)
-        try:
-            width = self.size.width - 12
-        except:
-            width = 80
-        
-        if width < 20:
-            width = 80
-        
-        text = Text()
-        
-        # Alle Werte für Skalierung sammeln
-        all_values = []
-        for data in self.data_series.values():
-            all_values.extend([v for v in data if v is not None])
-        
-        if not all_values:
-            return Text("Keine gültigen Daten", style="dim")
-        
-        y_min, y_max = min(all_values), max(all_values)
-        if y_min == y_max:
-            y_min -= 1
-            y_max += 1
-        
-        # Header mit Statistiken
-        stats_table = Table.grid(padding=(0, 2))
-        stats_table.add_column(style="bold")
-        stats_table.add_column()
-        
-        for i, (label, data) in enumerate(self.data_series.items()):
-            color = self.color_list[i % len(self.color_list)]
-            valid_data = [v for v in data if v is not None]
-            if valid_data:
-                current = valid_data[-1]
-                avg = sum(valid_data) / len(valid_data)
-                text.append(f"● {label}: ", style=f"bold {color}")
-                text.append(f"{current:.2f} ", style=color)
-                text.append(f"(Ø {avg:.2f}, Min: {min(valid_data):.2f}, Max: {max(valid_data):.2f})\n", 
-                           style="dim")
-        
-        text.append("\n")
-        
-        # Y-Achsen-Labels
-        y_labels = [
-            f"{y_max:>8.1f} │",
-            f"{(y_max + y_min) / 2:>8.1f} │",
-            f"{y_min:>8.1f} │"
-        ]
-        
-        # Graph für jede Datenreihe rendern
-        for series_idx, (label, data) in enumerate(self.data_series.items()):
-            color = self.color_list[series_idx % len(self.color_list)]
-            data_list = list(data)
-            
-            # Auf Breite anpassen
-            if len(data_list) > width:
-                data_list = data_list[-width:]
-            
-            # Graph-Zeilen erstellen
-            for row in range(self.graph_height):
-                # Y-Achsen-Label nur bei erster Serie
-                if series_idx == 0:
-                    if row == 0:
-                        text.append(y_labels[0], style="dim")
-                    elif row == self.graph_height // 2:
-                        text.append(y_labels[1], style="dim")
-                    elif row == self.graph_height - 1:
-                        text.append(y_labels[2], style="dim")
-                    else:
-                        text.append("         │", style="dim")
-                
-                # Nur bei erster Serie die Linie zeichnen
-                if series_idx == 0:
-                    for val in data_list:
-                        if val is None:
-                            text.append(" ", style="dim")
-                        else:
-                            # Normalisieren auf 0-1
-                            normalized = (val - y_min) / (y_max - y_min)
-                            # Invertieren für Terminal (oben = hoch)
-                            bar_height = int(normalized * self.graph_height)
-                            current_row_from_bottom = self.graph_height - 1 - row
-                            
-                            if bar_height > current_row_from_bottom:
-                                char_idx = min(8, int((normalized * 8)))
-                                text.append(GRAPH_CHARS[char_idx], style=color)
-                            else:
-                                text.append("·", style="dim")
-                    text.append("\n")
-        
-        # X-Achse
-        text.append("         └" + "─" * min(width, len(data_list)) + ">\n", style="dim")
-        text.append(f"          Samples (letzte {len(data_list)})", style="dim")
-        
-        return text
+    def toggle_mode(self) -> str:
+        """Wechselt zwischen den Graph-Modi"""
+        modes = [GRAPH_MODE_LINE, GRAPH_MODE_BAR, GRAPH_MODE_SCATTER]
+        current_idx = modes.index(self.graph_mode)
+        self.graph_mode = modes[(current_idx + 1) % len(modes)]
+        self.refresh()
+        return self.graph_mode
+    
+    def on_resize(self) -> None:
+        """Re-render bei Größenänderung"""
+        self.refresh()
     
     def render(self) -> Text:
-        return self.render_graph()
+        """Rendert den Graph mit plotext"""
+        if not self.data_series or not self.timestamps:
+            return Text("Warte auf Daten...", style="dim italic")
+        
+        try:
+            # Theme-Farben aus Textual holen
+            theme_cfg = self._get_theme_colors()
+            
+            # Plot konfigurieren
+            plt.clf()
+            plt.theme("dark" if theme_cfg["is_dark"] else "clear")
+            plt.canvas_color(theme_cfg["canvas_color"])
+            plt.axes_color(theme_cfg["axes_color"])
+            plt.ticks_color(theme_cfg["ticks_color"])
+            
+            # Größe an Widget anpassen
+            width = max(40, self.size.width - 2)
+            height = max(10, self.size.height - 4)
+            plt.plotsize(width, height)
+            
+            # X-Achsen-Daten
+            x = list(self.timestamps)
+            
+            # Farben aus Theme holen
+            plot_colors = theme_cfg["plot_colors"]
+            rich_colors = theme_cfg["rich_colors"]
+            
+            # Statistik-Header erstellen
+            stats_text = Text()
+            mode_names = {
+                GRAPH_MODE_LINE: "Linie",
+                GRAPH_MODE_BAR: "Balken", 
+                GRAPH_MODE_SCATTER: "Punkte"
+            }
+            stats_text.append(f"[{mode_names[self.graph_mode]}] ", style="bold cyan")
+            stats_text.append("(g=wechseln) ", style="dim")
+            
+            # Jede Datenreihe plotten
+            for i, (label, data) in enumerate(self.data_series.items()):
+                color = plot_colors[i % len(plot_colors)]
+                y = list(data)
+                
+                # None-Werte durch Interpolation oder Filterung behandeln
+                valid_x = []
+                valid_y = []
+                for xi, yi in zip(x, y):
+                    if yi is not None:
+                        valid_x.append(xi)
+                        valid_y.append(yi)
+                
+                if valid_x and valid_y:
+                    if self.graph_mode == GRAPH_MODE_LINE:
+                        plt.plot(valid_x, valid_y, label=label, color=color, marker="braille")
+                    elif self.graph_mode == GRAPH_MODE_BAR:
+                        plt.bar(valid_x, valid_y, label=label, color=color)
+                    else:  # SCATTER
+                        plt.scatter(valid_x, valid_y, label=label, color=color, marker="braille")
+                    
+                    # Statistiken zum Header hinzufügen
+                    current = valid_y[-1]
+                    avg = sum(valid_y) / len(valid_y)
+                    rich_color = rich_colors[i % len(rich_colors)]
+                    stats_text.append(f"● {label}: ", style=f"bold {rich_color}")
+                    stats_text.append(f"{current:.1f} ", style=rich_color)
+                    stats_text.append(f"(Ø{avg:.1f}) ", style="dim")
+            
+            # Graph rendern
+            graph_str = plt.build()
+            
+            # Zusammenbauen
+            result = Text()
+            result.append(stats_text)
+            result.append("\n")
+            result.append(Text.from_ansi(graph_str))
+            
+            return result
+            
+        except Exception as e:
+            return Text(f"Graph-Fehler: {e}", style="red")
 
 
 class CurrentValues(Static):
@@ -168,7 +259,16 @@ class CurrentValues(Static):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.values: dict[str, float] = {}
-        self.color_list = ["green", "cyan", "yellow", "magenta", "red", "blue"]
+    
+    def _get_colors(self) -> list[str]:
+        """Gibt die Farbliste basierend auf dem aktuellen Theme zurück"""
+        try:
+            theme = self.app.current_theme
+            if theme and not theme.dark:
+                return ["dark_green", "blue", "dark_orange", "dark_magenta", "dark_red", "dark_cyan"]
+        except:
+            pass
+        return ["green", "cyan", "yellow", "magenta", "red", "blue"]
     
     def update_values(self, values: dict[str, float]) -> None:
         self.values.update(values)
@@ -182,8 +282,9 @@ class CurrentValues(Static):
         text.append("Aktuelle Werte\n", style="bold underline")
         text.append("\n")
         
+        colors = self._get_colors()
         for i, (label, value) in enumerate(self.values.items()):
-            color = self.color_list[i % len(self.color_list)]
+            color = colors[i % len(colors)]
             text.append(f"  ● {label}: ", style=f"bold {color}")
             text.append(f"{value:.4f}\n", style=color)
         
@@ -237,6 +338,8 @@ class SerialPlotterTUI(App):
         ("q", "quit", "Beenden"),
         ("c", "clear", "Löschen"),
         ("p", "pause", "Pause"),
+        ("g", "toggle_graph", "Graph-Modus"),
+        ("t", "toggle_theme", "Theme"),
     ]
     
     paused = reactive(False)
@@ -261,7 +364,7 @@ class SerialPlotterTUI(App):
             
             with Vertical(id="right-panel"):
                 yield Static(" 📊 Echtzeit-Graph", classes="title")
-                yield AsciiGraph(max_points=self.max_points, id="graph")
+                yield PlotextGraph(max_points=self.max_points, id="graph")
         
         yield Footer()
     
@@ -359,7 +462,7 @@ class SerialPlotterTUI(App):
             current.update_values(values)
             
             # Graph aktualisieren
-            graph = self.query_one("#graph", AsciiGraph)
+            graph = self.query_one("#graph", PlotextGraph)
             graph.add_values(values)
     
     def action_quit(self) -> None:
@@ -382,6 +485,68 @@ class SerialPlotterTUI(App):
             log.write("[yellow]⏸ Pausiert[/yellow]")
         else:
             log.write("[green]▶ Fortgesetzt[/green]")
+    
+    def action_toggle_graph(self) -> None:
+        """Wechselt zwischen den Graph-Modi"""
+        graph = self.query_one("#graph", PlotextGraph)
+        new_mode = graph.toggle_mode()
+        log = self.query_one("#serial-log", RichLog)
+        mode_names = {
+            GRAPH_MODE_LINE: "Liniendiagramm",
+            GRAPH_MODE_BAR: "Balkendiagramm",
+            GRAPH_MODE_SCATTER: "Punktdiagramm"
+        }
+        log.write(f"[cyan]📊 Graph-Modus: {mode_names[new_mode]}[/cyan]")
+    
+    def action_toggle_theme(self) -> None:
+        """Wechselt durch die verfügbaren Themes"""
+        # Liste der Themes zum Durchschalten
+        theme_cycle = [
+            "textual-dark",
+            "textual-light",
+            "nord",
+            "gruvbox",
+            "dracula",
+            "tokyo-night",
+            "monokai",
+            "catppuccin-mocha",
+            "catppuccin-latte",
+            "solarized-dark",
+            "solarized-light",
+        ]
+        
+        # Aktuelles Theme finden und zum nächsten wechseln
+        try:
+            current_theme = self.theme
+            if current_theme in theme_cycle:
+                current_idx = theme_cycle.index(current_theme)
+                next_idx = (current_idx + 1) % len(theme_cycle)
+            else:
+                next_idx = 0
+            
+            next_theme = theme_cycle[next_idx]
+            self.theme = next_theme
+            
+        except Exception:
+            # Fallback
+            if not hasattr(self, '_theme_idx'):
+                self._theme_idx = 0
+            self._theme_idx = (self._theme_idx + 1) % len(theme_cycle)
+            next_theme = theme_cycle[self._theme_idx]
+            try:
+                self.theme = next_theme
+            except:
+                pass
+        
+        # Widgets refreshen - sie lesen das Theme automatisch aus self.app.current_theme
+        graph = self.query_one("#graph", PlotextGraph)
+        graph.refresh()
+        
+        current_values = self.query_one("#current-values", CurrentValues)
+        current_values.refresh()
+        
+        log = self.query_one("#serial-log", RichLog)
+        log.write(f"[cyan]🎨 Theme: {next_theme}[/cyan]")
 
 
 def list_serial_ports():
