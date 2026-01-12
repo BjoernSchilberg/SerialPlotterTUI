@@ -567,6 +567,26 @@ def list_serial_ports():
     return [p.device for p in ports]
 
 
+def create_app(port: str = None, baudrate: int = 115200, max_points: int = 100) -> SerialPlotterTUI:
+    """Factory-Funktion für textual-serve Kompatibilität.
+    
+    Für textual-serve muss eine Funktion existieren, die die App-Instanz zurückgibt.
+    """
+    # Wenn kein Port angegeben, versuche den ersten verfügbaren zu finden
+    if not port:
+        ports = serial.tools.list_ports.comports()
+        if ports:
+            port = ports[0].device
+        else:
+            port = "/dev/ttyUSB0"  # Fallback
+    
+    return SerialPlotterTUI(
+        port=port,
+        baudrate=baudrate,
+        max_points=max_points
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(
         description='Echtzeit Serial Plotter TUI - Terminal User Interface',
@@ -576,11 +596,15 @@ Beispiele:
   %(prog)s /dev/ttyUSB0              # Standard 115200 baud
   %(prog)s /dev/ttyACM0 -b 9600      # Mit 9600 baud
   %(prog)s --list                    # Verfügbare Ports anzeigen
+  %(prog)s --serve                   # Als Web-Server starten (Browser)
+  %(prog)s --serve --host 0.0.0.0    # Server auf allen Interfaces
 
 Tastenkürzel:
   q - Beenden
   c - Log löschen  
   p - Pause/Fortsetzen
+  g - Graph-Modus wechseln (Line/Bar/Scatter)
+  t - Theme wechseln
         """
     )
     
@@ -591,6 +615,12 @@ Tastenkürzel:
                         help='Maximale Datenpunkte im Graph (Standard: 100)')
     parser.add_argument('-l', '--list', action='store_true',
                         help='Verfügbare Ports auflisten')
+    parser.add_argument('--serve', action='store_true',
+                        help='Als Web-Server starten (für Browser-Zugriff)')
+    parser.add_argument('--host', type=str, default='localhost',
+                        help='Host für Web-Server (Standard: localhost)')
+    parser.add_argument('--web-port', type=int, default=8000,
+                        help='Port für Web-Server (Standard: 8000)')
     
     args = parser.parse_args()
     
@@ -598,10 +628,42 @@ Tastenkürzel:
         list_serial_ports()
         return
     
+    if args.serve:
+        # Web-Server Modus mit textual-serve
+        try:
+            from textual_serve.server import Server
+        except ImportError:
+            print("Fehler: textual-serve ist nicht installiert.")
+            print("Installiere mit: pip install textual-serve")
+            return
+        
+        # Port für Serial-Verbindung ermitteln
+        serial_port = args.port
+        if not serial_port:
+            ports = serial.tools.list_ports.comports()
+            if ports:
+                serial_port = ports[0].device
+                print(f"Verwende automatisch erkannten Port: {serial_port}")
+            else:
+                print("Warnung: Kein serieller Port angegeben oder gefunden.")
+                serial_port = "/dev/ttyUSB0"
+        
+        # Kommando für textual-serve zusammenbauen
+        command = f"python {sys.argv[0]} {serial_port} -b {args.baudrate} -p {args.points}"
+        
+        print(f"Starte Web-Server auf http://{args.host}:{args.web_port}")
+        print(f"Serial Port: {serial_port} @ {args.baudrate} baud")
+        print("Drücke Ctrl+C zum Beenden")
+        
+        server = Server(command, host=args.host, port=args.web_port)
+        server.serve()
+        return
+    
     if not args.port:
         ports = list_serial_ports()
         if ports:
             print(f"\nTipp: Starte mit: python {sys.argv[0]} {ports[0]}")
+            print(f"      Oder im Browser: python {sys.argv[0]} {ports[0]} --serve")
         else:
             parser.print_help()
         return
