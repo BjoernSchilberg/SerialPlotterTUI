@@ -23,6 +23,7 @@ import serial.tools.list_ports
 import plotext as plt
 
 from textual.app import App, ComposeResult
+from textual.command import Hit, Hits, Provider, DiscoveryHit
 from textual.containers import Container, Horizontal, Vertical
 from textual.widgets import Header, Footer, Static, Log, RichLog
 from textual.reactive import reactive
@@ -293,8 +294,49 @@ class CurrentValues(Static):
         return text
 
 
+class SerialPlotterCommands(Provider):
+    """Command Provider für die Command Palette"""
+    
+    def _get_commands(self) -> list:
+        """Gibt die Liste aller verfügbaren Befehle zurück"""
+        app = self.app
+        return [
+            ("Log löschen", "Löscht alle Einträge im Log", app.action_clear),
+            ("Pause/Fortsetzen", "Pausiert oder setzt die Datenaufnahme fort", app.action_pause),
+            ("Graph-Modus wechseln", "Wechselt zwischen Linien-, Balken- und Punktdiagramm", app.action_toggle_graph),
+            ("Theme wechseln", "Wechselt zum nächsten Farbschema", app.action_toggle_theme),
+            ("Daten als CSV speichern", "Speichert alle erfassten Daten als CSV-Datei", app.action_save_csv),
+            ("Beenden", "Beendet die Anwendung", app.action_quit),
+        ]
+    
+    async def discover(self) -> Hits:
+        """Zeigt alle Befehle beim Öffnen der Command Palette"""
+        for name, help_text, callback in self._get_commands():
+            yield DiscoveryHit(
+                name,
+                callback,
+                help=help_text,
+            )
+    
+    async def search(self, query: str) -> Hits:
+        """Sucht nach Befehlen"""
+        matcher = self.matcher(query)
+        
+        for name, help_text, callback in self._get_commands():
+            score = matcher.match(name)
+            if score > 0:
+                yield Hit(
+                    score,
+                    matcher.highlight(name),
+                    callback,
+                    help=help_text,
+                )
+
+
 class SerialPlotterTUI(App):
     """Textual-basierte Serial Plotter Anwendung"""
+    
+    COMMANDS = {SerialPlotterCommands}
     
     CSS = """
     Screen {
