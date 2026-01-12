@@ -282,7 +282,7 @@ class CurrentValues(Static):
             return Text("Warte auf Daten...", style="dim italic")
         
         text = Text()
-        text.append("Aktuelle Werte\n", style="bold underline")
+        text.append("📋 Aktuelle Werte\n", style="bold")
         text.append("\n")
         
         colors = self._get_colors()
@@ -340,35 +340,31 @@ class SerialPlotterTUI(App):
     COMMANDS = {SerialPlotterCommands}
     
     CSS = """
-    Screen {
-        layout: horizontal;
-    }
-    
     #left-panel {
         width: 35%;
         height: 100%;
-        border: solid green;
+        border: solid $primary;
     }
     
     #right-panel {
         width: 65%;
         height: 100%;
+        border: solid $secondary;
     }
     
     #serial-log {
-        height: 70%;
+        height: 3fr;
         border: solid $primary;
     }
     
     #current-values {
-        height: 30%;
-        border: solid $secondary;
+        height: 1fr;
+        border: solid $primary;
         padding: 1;
     }
     
     #graph {
-        height: 100%;
-        border: solid cyan;
+        height: 1fr;
         padding: 1;
     }
     
