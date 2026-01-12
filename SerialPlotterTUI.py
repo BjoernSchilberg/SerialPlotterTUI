@@ -306,6 +306,7 @@ class SerialPlotterCommands(Provider):
             ("Graph-Modus wechseln", "Wechselt zwischen Linien-, Balken- und Punktdiagramm", app.action_toggle_graph),
             ("Theme wechseln", "Wechselt zum nächsten Farbschema", app.action_toggle_theme),
             ("Daten als CSV speichern", "Speichert alle erfassten Daten als CSV-Datei", app.action_save_csv),
+            ("Screenshot speichern", "Speichert einen Screenshot der Anwendung als SVG", app.action_screenshot),
             ("Beenden", "Beendet die Anwendung", app.action_quit),
         ]
     
