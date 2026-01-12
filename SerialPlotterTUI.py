@@ -13,6 +13,8 @@ Unterstützte Formate:
 import sys
 import argparse
 import re
+import csv
+import os
 from collections import deque
 from datetime import datetime
 
@@ -340,6 +342,7 @@ class SerialPlotterTUI(App):
         ("p", "pause", "Pause"),
         ("g", "toggle_graph", "Graph-Modus"),
         ("t", "toggle_theme", "Theme"),
+        ("s", "save_csv", "Speichern der Daten als csv"),
     ]
     
     paused = reactive(False)
@@ -351,6 +354,10 @@ class SerialPlotterTUI(App):
         self.max_points = max_points
         self.serial_conn = None
         self.running = True
+        # Session-Daten für CSV-Export
+        self.session_data: list[dict] = []
+        self.session_start = datetime.now()
+        self.all_labels: set[str] = set()
     
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -535,6 +542,15 @@ class SerialPlotterTUI(App):
         # Werte parsen und anzeigen
         values = self.parse_line(line)
         if values:
+            # Session-Daten für CSV speichern
+            data_point = {
+                'timestamp': datetime.now().isoformat(),
+                'raw_line': line,
+                **values
+            }
+            self.session_data.append(data_point)
+            self.all_labels.update(values.keys())
+            
             # Aktuelle Werte aktualisieren
             current = self.query_one("#current-values", CurrentValues)
             current.update_values(values)
@@ -575,6 +591,39 @@ class SerialPlotterTUI(App):
             GRAPH_MODE_SCATTER: "Punktdiagramm"
         }
         log.write(f"[cyan]📊 Graph-Modus: {mode_names[new_mode]}[/cyan]")
+    
+    def action_save_csv(self) -> None:
+        """Speichert die Session-Daten als CSV-Datei"""
+        if not self.session_data:
+            self.notify("Keine Daten zum Speichern vorhanden", severity="warning")
+            return
+        
+        # Dateiname mit Zeitstempel generieren
+        timestamp = self.session_start.strftime("%Y%m%d_%H%M%S")
+        filename = f"serial_data_{timestamp}.csv"
+        
+        try:
+            # Alle Spalten sammeln (timestamp + raw_line + alle Labels)
+            fieldnames = ['timestamp', 'raw_line'] + sorted(self.all_labels)
+            
+            with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames, extrasaction='ignore')
+                writer.writeheader()
+                
+                for data_point in self.session_data:
+                    # Fehlende Werte mit leerem String füllen
+                    row = {key: data_point.get(key, '') for key in fieldnames}
+                    writer.writerow(row)
+            
+            # Absolute Pfad für Anzeige
+            abs_path = os.path.abspath(filename)
+            self.notify(
+                f"{len(self.session_data)} Datenpunkte gespeichert\n{abs_path}",
+                title="💾 CSV gespeichert",
+                severity="information"
+            )
+        except Exception as e:
+            self.notify(f"Fehler beim Speichern: {e}", severity="error")
     
     def action_toggle_theme(self) -> None:
         """Wechselt durch die verfügbaren Themes"""
@@ -683,6 +732,7 @@ Tastenkürzel:
   p - Pause/Fortsetzen
   g - Graph-Modus wechseln (Line/Bar/Scatter)
   t - Theme wechseln
+  s - Speichern der Daten als csv
         """
     )
     
