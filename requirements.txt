@@ -1,2 +1,5 @@
 pyserial>=3.5
-matplotlib>=3.5.0
+textual>=0.40.0
+textual-serve>=1.0.0
+rich>=13.0.0
+plotext>=5.2.0
