@@ -618,6 +618,7 @@ class SerialPlotterTUI(App):
         """Löscht den Log"""
         log = self.query_one("#serial-log", RichLog)
         log.clear()
+        self.notify("Log gelöscht", title="🗑️ Gelöscht")
     
     def action_pause(self) -> None:
         """Pausiert/Fortsetzt die Datenaufnahme"""
@@ -632,13 +633,12 @@ class SerialPlotterTUI(App):
         """Wechselt zwischen den Graph-Modi"""
         graph = self.query_one("#graph", PlotextGraph)
         new_mode = graph.toggle_mode()
-        log = self.query_one("#serial-log", RichLog)
         mode_names = {
             GRAPH_MODE_LINE: "Liniendiagramm",
             GRAPH_MODE_BAR: "Balkendiagramm",
             GRAPH_MODE_SCATTER: "Punktdiagramm"
         }
-        log.write(f"[cyan]📊 Graph-Modus: {mode_names[new_mode]}[/cyan]")
+        self.notify(f"{mode_names[new_mode]}", title="📊 Graph-Modus")
     
     def action_save_csv(self) -> None:
         """Speichert die Session-Daten als CSV-Datei"""
