@@ -373,21 +373,36 @@ class SerialPlotterTUI(App):
         self.connect_serial()
         self.read_serial_loop()
     
-    def connect_serial(self) -> bool:
+    def connect_serial(self, silent: bool = False) -> bool:
         """Verbindung zur seriellen Schnittstelle herstellen"""
         try:
+            # Falls noch eine alte Verbindung offen ist, schließen
+            if self.serial_conn:
+                try:
+                    self.serial_conn.close()
+                except Exception:
+                    pass
+                self.serial_conn = None
+            
             self.serial_conn = serial.Serial(
                 port=self.port,
                 baudrate=self.baudrate,
                 timeout=0.1
             )
-            log = self.query_one("#serial-log", RichLog)
-            log.write(f"[green]✓ Verbunden mit {self.port} @ {self.baudrate} baud[/green]")
-            log.write("")
+            if not silent:
+                log = self.query_one("#serial-log", RichLog)
+                log.write(f"[green]✓ Verbunden mit {self.port} @ {self.baudrate} baud[/green]")
+                log.write("")
             return True
         except serial.SerialException as e:
-            log = self.query_one("#serial-log", RichLog)
-            log.write(f"[red]✗ Fehler: {e}[/red]")
+            if not silent:
+                log = self.query_one("#serial-log", RichLog)
+                log.write(f"[red]✗ Fehler: {e}[/red]")
+            return False
+        except Exception as e:
+            if not silent:
+                log = self.query_one("#serial-log", RichLog)
+                log.write(f"[red]✗ Unerwarteter Fehler: {e}[/red]")
             return False
     
     def parse_line(self, line: str) -> dict[str, float]:
@@ -426,26 +441,89 @@ class SerialPlotterTUI(App):
         """Hintergrund-Thread zum Lesen der seriellen Daten"""
         import time
         
+        disconnected = False
+        reconnect_interval = 1.0  # Sekunden zwischen Reconnect-Versuchen
+        last_reconnect_attempt = 0
+        
         while self.running:
             if self.paused:
                 time.sleep(0.1)
                 continue
             
-            if self.serial_conn and self.serial_conn.in_waiting:
-                try:
+            # Prüfen ob Verbindung besteht
+            if not self.serial_conn or not self.serial_conn.is_open:
+                current_time = time.time()
+                if current_time - last_reconnect_attempt >= reconnect_interval:
+                    last_reconnect_attempt = current_time
+                    if not disconnected:
+                        disconnected = True
+                        self.call_from_thread(self._show_disconnected)
+                    
+                    # Versuche Reconnect
+                    if self._try_reconnect():
+                        disconnected = False
+                        self.call_from_thread(self._show_reconnected)
+                
+                time.sleep(0.1)
+                continue
+            
+            try:
+                if self.serial_conn.in_waiting:
                     line = self.serial_conn.readline().decode('utf-8', errors='ignore')
                     line = line.strip()
                     
                     if line:
                         # UI-Update im Haupt-Thread
                         self.call_from_thread(self.process_line, line)
-                except Exception as e:
-                    self.call_from_thread(
-                        self.query_one("#serial-log", RichLog).write,
-                        f"[red]Fehler: {e}[/red]"
-                    )
+            except serial.SerialException as e:
+                # Gerät wurde getrennt
+                if not disconnected:
+                    disconnected = True
+                    self.call_from_thread(self._show_disconnected)
+                try:
+                    self.serial_conn.close()
+                except Exception:
+                    pass
+                self.serial_conn = None
+            except OSError as e:
+                # Gerät nicht mehr verfügbar (z.B. USB getrennt)
+                if not disconnected:
+                    disconnected = True
+                    self.call_from_thread(self._show_disconnected)
+                try:
+                    self.serial_conn.close()
+                except Exception:
+                    pass
+                self.serial_conn = None
+            except Exception as e:
+                self.call_from_thread(
+                    self.query_one("#serial-log", RichLog).write,
+                    f"[red]Fehler: {e}[/red]"
+                )
             
             time.sleep(0.01)  # 10ms Pause
+    
+    def _try_reconnect(self) -> bool:
+        """Versucht die serielle Verbindung wiederherzustellen (Thread-safe)"""
+        try:
+            self.serial_conn = serial.Serial(
+                port=self.port,
+                baudrate=self.baudrate,
+                timeout=0.1
+            )
+            return True
+        except Exception:
+            return False
+    
+    def _show_disconnected(self) -> None:
+        """Zeigt Disconnect-Meldung im Log"""
+        log = self.query_one("#serial-log", RichLog)
+        log.write(f"[yellow]⚠ Gerät {self.port} getrennt - warte auf Wiederverbindung...[/yellow]")
+    
+    def _show_reconnected(self) -> None:
+        """Zeigt Reconnect-Meldung im Log"""
+        log = self.query_one("#serial-log", RichLog)
+        log.write(f"[green]✓ Wiederverbunden mit {self.port}[/green]")
     
     def process_line(self, line: str) -> None:
         """Verarbeitet eine empfangene Zeile"""
