@@ -672,8 +672,7 @@ class SerialPlotterTUI(App):
         current_values = self.query_one("#current-values", CurrentValues)
         current_values.refresh()
         
-        log = self.query_one("#serial-log", RichLog)
-        log.write(f"[cyan]🎨 Theme: {next_theme}[/cyan]")
+        self.notify(f"Theme: {next_theme}", title="🎨 Theme gewechselt")
 
 
 def list_serial_ports():
